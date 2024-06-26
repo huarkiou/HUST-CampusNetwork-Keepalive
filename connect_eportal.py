@@ -9,8 +9,48 @@ import re
 # import gzip
 import json
 import urllib.parse
-# from Crypto.PublicKey import RSA
-# from Crypto.Cipher import PKCS1_v1_5 as PKCS1_cipher
+
+
+def main():
+    secret_file = "secret.cfg"
+    username, password = get_userinfo(secret_file)
+    while True:
+        try:
+            main_loop(10, 60, username, password)
+        except Exception as e:
+            info = ""
+            for s in traceback.format_exception(e):
+                info += s
+            log(info)
+
+
+def main_loop(timeout_without_network: int, timeout_with_network: int,
+              username: str, password: str):
+    while True:
+        origin_url = get_verification_url()
+        if origin_url == None:
+            if pong():
+                time.sleep(timeout_with_network)
+            else:
+                time.sleep(timeout_without_network)
+            continue
+        # 获取cookies中的sessionid
+        cookies = get_initial_cookies(origin_url)
+        # 对 密码+">"+mac 进行加密作为password传给认证服务器
+        modulus, exponent = get_modexp_from_pageinfo(origin_url, cookies)
+        macstring = re.search(r"mac=(\w*)&", origin_url.query)
+        if macstring == None:
+            macstring = "111111111"
+        else:
+            macstring = macstring.group(1)
+        passwordEncode = password + ">" + macstring
+        passwordEncrypt = rsa_no_padding(passwordEncode, modulus, exponent)
+        # 构造认证所需eportal cookies
+        cookies = construct_cookies(username, passwordEncrypt, cookies)
+        # 发送登录POST请求
+        cookies = login(origin_url, cookies)
+        # 等待
+        time.sleep(2)
 
 
 def count_lines(filename: str):
@@ -50,30 +90,33 @@ def rsa_no_padding(text, modulus: int, exponent: int):
     # 16进制转10进制
     text = text.encode('utf-8')
     # 字符串逆向并转换为bytes
-    input_nr = int.from_bytes(text, byteorder='big')
     # 将字节转化成int型数字，如果没有标明进制，看做ascii码值
-    crypt_nr = pow(input_nr, exponent, modulus)
+    input_nr = int.from_bytes(text, byteorder='big')
     # 计算x的y次方，如果z在存在，则再对结果进行取模，其结果等效于pow(x,y) %z
-    length = ceil(modulus.bit_length() / 8)
+    crypt_nr = pow(input_nr, exponent, modulus)
     # 取模数的比特长度(二进制长度)，除以8将比特转为字节
-    crypt_data = crypt_nr.to_bytes(length, byteorder='big')
+    length = ceil(modulus.bit_length() / 8)
     # 将密文转换为bytes存储(8字节)，返回hex(16字节)
+    crypt_data = crypt_nr.to_bytes(length, byteorder='big')
     return crypt_data.hex()
 
 
-# def encrypt_data(msg: str, exponent: int, modulus: int):
-#     public_key = RSA.construct((modulus, exponent))
-#     cipher = PKCS1_cipher.new(public_key, randfunc=lambda a: b"0")
-#     encrypt_text = cipher.encrypt(msg.encode("utf8")).hex()
-#     return encrypt_text
-
-
 def get_verification_url() -> urllib.parse.ParseResult | None:
-    res = requests.get(
-        r"http://edge-http.microsoft.com/captiveportal/generate_204",
-        allow_redirects=False)
+    urls = (
+        r"http://connect.rom.miui.com/generate_204",
+        r"http://connectivitycheck.platform.hicloud.com/generate_204",
+        r"http://wifi.vivo.com.cn/generate_204",
+        r"http://1.1.1.1",
+    )
 
-    if res.content.decode() == "":
+    res = None
+    for url in urls:
+        try:
+            res = requests.get(url, allow_redirects=False, proxies=None)
+        except Exception as e:
+            log(str(e))
+
+    if res == None or res.content.decode() == "":
         return None
 
     # 获取认证url
@@ -191,6 +234,9 @@ def login(origin_url: urllib.parse.ParseResult,
     }
 
     # login POST请求表单
+    if (not "EPORTAL_COOKIE_USERNAME" in cookies.keys()) or (
+            not "EPORTAL_COOKIE_PASSWORD" in cookies.keys()):
+        return False
     postdata = {
         "service": "",
         "operatorPwd": "",
@@ -198,8 +244,10 @@ def login(origin_url: urllib.parse.ParseResult,
         "validcode": "",
         "passwordEncrypt": "true",
         "queryString": urllib.parse.quote(origin_url.query),
-        "userId": cookies.get("EPORTAL_COOKIE_USERNAME").strip(),
-        "password": cookies.get("EPORTAL_COOKIE_PASSWORD").strip(),
+        "userId":
+        cookies.get("EPORTAL_COOKIE_USERNAME").strip(),  # type: ignore
+        "password":
+        cookies.get("EPORTAL_COOKIE_PASSWORD").strip(),  # type: ignore
     }
     # print(postdata)
 
@@ -242,35 +290,6 @@ def pong():
     return ping("hust.edu.cn", 4) or ping("8.8.8.8", 4)
 
 
-def main_loop(timeout_without_network: int, timeout_with_network: int,
-              username: str, password: str):
-    while True:
-        origin_url = get_verification_url()
-        if origin_url == None:
-            if pong():
-                time.sleep(timeout_with_network)
-            else:
-                time.sleep(timeout_without_network)
-            continue
-        # 获取cookies中的sessionid
-        cookies = get_initial_cookies(origin_url)
-        # 对 密码+">"+mac 进行加密作为password传给认证服务器
-        modulus, exponent = get_modexp_from_pageinfo(origin_url, cookies)
-        macstring = re.search(r"mac=(\w*)&", origin_url.query)
-        if macstring == None:
-            macstring = "111111111"
-        else:
-            macstring = macstring.group(1)
-        passwordEncode = password + ">" + macstring
-        passwordEncrypt = rsa_no_padding(passwordEncode, modulus, exponent)
-        # 构造认证所需eportal cookies
-        cookies = construct_cookies(username, passwordEncrypt, cookies)
-        # 发送登录POST请求
-        cookies = login(origin_url, cookies)
-        # 等待
-        time.sleep(2)
-
-
 def get_userinfo(secret_file):
     if not os.path.exists(secret_file):
         with open(secret_file, 'w') as f:
@@ -286,13 +305,4 @@ def get_userinfo(secret_file):
 
 
 if __name__ == "__main__":
-    secret_file = "secret.cfg"
-    username, password = get_userinfo(secret_file)
-    while True:
-        try:
-            main_loop(10, 60, username, password)
-        except Exception as e:
-            info = ""
-            for s in traceback.format_exception(e):
-                info += s
-            log(info)
+    main()
