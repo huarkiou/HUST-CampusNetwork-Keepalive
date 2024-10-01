@@ -62,15 +62,15 @@ def count_lines(filename: str):
     return lines
 
 
-def truncate_line(filename: str, n: int):
-    lines = 0
+def truncate_line(filename: str, n_reserve: int, n_current: int):
+    if n_current < n_reserve:
+        return
+    lines = []
     with open(filename, "r+") as f:
-        for _ in f:
-            lines += 1
-            if lines >= n:
-                f.truncate()
-                f.write("\n")
-                break
+        lines = f.readlines()
+    lines = lines[n_current - int(n_reserve / 2):]
+    with open(filename, "w") as f:
+        f.writelines(lines)
     return
 
 
@@ -80,7 +80,7 @@ def log(info: str):
     log_file = os.environ.get("AUTO_CONNECT_HUSTNET_LOG_FILE", "connect2.log")
     n_lines = count_lines(log_file)
     if n_lines > 500:
-        truncate_line(log_file, 500)
+        truncate_line(log_file, 500, n_lines)
     print(time_str + info.strip())
     with open(log_file, "a") as f:
         f.write(time_str + info.strip() + "\n")
