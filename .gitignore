@@ -2,3 +2,5 @@
 *.log
 *.txt
 secret.*
+target
+Cargo.lock
