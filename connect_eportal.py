@@ -79,8 +79,7 @@ def log(info: str):
                                      time.localtime()) + " "
     log_file = os.environ.get("AUTO_CONNECT_HUSTNET_LOG_FILE", "connect2.log")
     n_lines = count_lines(log_file)
-    if n_lines > 500:
-        truncate_line(log_file, 500, n_lines)
+    truncate_line(log_file, 500, n_lines)
     print(time_str + info.strip())
     with open(log_file, "a") as f:
         f.write(time_str + info.strip() + "\n")
